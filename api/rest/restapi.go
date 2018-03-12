@@ -7,15 +7,17 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"math/rand"
 	"mime"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	types "github.com/ipfs/ipfs-cluster/api"
-	importer "github.com/ipfs/ipfs-cluster/ipld-importer"
+	"github.com/ipfs/ipfs-cluster/importer"
 
 	mux "github.com/gorilla/mux"
 	rpc "github.com/hsanjuan/go-libp2p-gorpc"
@@ -27,7 +29,14 @@ import (
 	manet "github.com/multiformats/go-multiaddr-net"
 )
 
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
+
 var logger = logging.Logger("restapi")
+
+// For making a random sharding ID
+var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 // API implements an API and aims to provides
 // a RESTful HTTP API for Cluster.
@@ -362,6 +371,152 @@ func (api *API) graphHandler(w http.ResponseWriter, r *http.Request) {
 	sendResponse(w, err, graph)
 }
 
+func (api *API) consumeLocalAdd(args map[string]string, outObj *types.NodeWithMeta) error {
+	//TODO: when ipfs add starts supporting formats other than
+	// v0 (v1.cbor, v1.protobuf) we'll need to update this
+	outObj.Format = ""
+	args["cid"] = outObj.Cid // root node stored on last call
+	var hash string
+	err := api.rpcClient.Call("",
+		"Cluster",
+		"IPFSBlockPut",
+		*outObj,
+		&hash)
+	if outObj.Cid != hash {
+		logger.Warningf("mismatch. node cid: %s\nrpc cid: %s", outObj.Cid, hash)
+	}
+	return err
+}
+
+func (api *API) finishLocalAdd(args map[string]string) error {
+	// TODO: pin the root node from here, rpc.Call(pin, args["cid"])
+	return nil
+}
+
+func (api *API) consumeShardAdd(args map[string]string, outObj *types.NodeWithMeta) error {
+	var shardID string
+	shardID, ok := args["id"]
+	outObj.ID = shardID
+	var retStr string
+	err := api.rpcClient.Call("",
+		"Cluster",
+		"SharderAddNode",
+		*outObj,
+		&retStr)
+	if !ok {
+		args["id"] = retStr
+	}
+	return err
+}
+
+func (api *API) finishShardAdd(args map[string]string) error {
+	shardID, ok := args["id"]
+	if !ok {
+		return errors.New("bad state: shardID passed incorrectly")
+	}
+	return api.rpcClient.Call("", "Cluster", "SharderFinalize", shardID,
+		&struct{}{})
+}
+
+func (api *API) consumeImport(ctx context.Context,
+	outChan <-chan *types.NodeWithMeta,
+	printChan <-chan *types.AddedOutput,
+	errChan <-chan error,
+	w http.ResponseWriter,
+	consume func(map[string]string, *types.NodeWithMeta) error,
+	finish func(map[string]string) error) error {
+	var err error
+	openChs := 3
+	enc := json.NewEncoder(w)
+	w.Header().Add("Content-Type", "application/json")
+	w.WriteHeader(200)
+	//	flusher, _ := w.(http.Flusher)
+	toPrint := make([]*types.AddedOutput, 0)
+	args := make(map[string]string)
+
+	for {
+		if openChs == 0 {
+			break
+		}
+
+		// Consume signals from importer.  Errors resulting from
+		// consuming the importers' signals cause error objects to be
+		// streamed in the response body.  The client reads these
+		// errors and terminates the session.
+		// Codes: 1 = error, 0 = non-error response, 2 = successful
+		// termination
+		// TODO: Unlike earlier approaches this is actually systematic
+		// and handles all possible errors.  This approach is still
+		// deferring the investigation into what error handling
+		// approaches give the best UX however.
+		select {
+		// Ensure we terminate reading from importer after cancellation
+		// but do not block
+		case <-ctx.Done():
+			err = errors.New("context timeout terminated add")
+			return enc.Encode(types.Error{Code: 1, Message: err.Error()})
+		// Terminate session when importer throws an error
+		case err, ok := <-errChan:
+			if !ok {
+				openChs--
+				errChan = nil
+				continue
+			}
+			return enc.Encode(types.Error{Code: 1, Message: err.Error()})
+
+		// Send status information to client for user output
+		case printObj, ok := <-printChan:
+			//TODO: if we support progress bar we must update this
+			if !ok {
+				openChs--
+				printChan = nil
+				continue
+			}
+			toPrint = append(toPrint, printObj)
+			// TODO: figure out how to stream response concurrent with
+			// request.  This commented section succeeds in streaming
+			// a response but doing so prematurely truncates request reads.
+			/*err = enc.Encode(printObj)
+			if err != nil {
+				return enc.Encode(types.Error{Code: 1, Message: err.Error()})
+			}
+			flusher.Flush() // send output info immediately*/
+		// Consume ipld node output by importer
+		case outObj, ok := <-outChan:
+			if !ok {
+				openChs--
+				outChan = nil
+				continue
+			}
+
+			if err := consume(args, outObj); err != nil {
+				return enc.Encode(types.Error{Code: 1, Message: err.Error()})
+			}
+		}
+	}
+
+	if err := finish(args); err != nil {
+		return enc.Encode(types.Error{Code: 1, Message: err.Error()})
+	}
+
+	// TODO: these writes will move from after imports completely read to
+	// eager writing as soon as the printable object is read from channel
+	// once we fix the req/res streaming problem
+	for _, obj := range toPrint {
+		enc.Encode(obj)
+	}
+	return enc.Encode(types.Error{Code: 2, Message: "success"})
+}
+
+// Get a random string of length n.  Used to generate sharding id
+func randStringRunes(n int) string {
+	b := make([]rune, n)
+	for i := range b {
+		b[i] = letterRunes[rand.Intn(len(letterRunes))]
+	}
+	return string(b)
+}
+
 func (api *API) addFileHandler(w http.ResponseWriter, r *http.Request) {
 	contentType := r.Header.Get("Content-Type")
 	mediatype, _, _ := mime.ParseMediaType(contentType)
@@ -369,7 +524,7 @@ func (api *API) addFileHandler(w http.ResponseWriter, r *http.Request) {
 	if mediatype == "multipart/form-data" {
 		reader, err := r.MultipartReader()
 		if err != nil {
-			sendAcceptedResponse(w, err)
+			sendErrorResponse(w, 400, err.Error())
 			return
 		}
 
@@ -377,45 +532,43 @@ func (api *API) addFileHandler(w http.ResponseWriter, r *http.Request) {
 			Mediatype: mediatype,
 			Reader:    reader,
 		}
-
 	} else {
-		sendAcceptedResponse(w, errors.New("unsupported media type"))
+		sendErrorResponse(w, 415, "unsupported media type")
 		return
 	}
 
 	ctx, cancel := context.WithCancel(api.ctx)
 	defer cancel()
 
-	outChan, err := importer.ToChannel(ctx, f)
-	for nodePtr := range outChan {
-		node := *nodePtr
-		/* Send block data to ipfs */
-		var hash string
-		err := api.rpcClient.Call("",
-			"Cluster",
-			"IPFSBlockPut",
-			node.RawData(),
-			&hash)
-		/* Verify that block put cid matches*/
-		if node.String() != hash { // node string is just cid string
-			logger.Warningf("mismatch. node cid: %s\nrpc cid: %s", node.String(), hash)
+	queryValues := r.URL.Query()
+	layout := queryValues.Get("layout")
+	trickle := false
+	if layout == "trickle" {
+		trickle = true
+	}
+	chunker := queryValues.Get("chunker")
+	raw, _ := strconv.ParseBool(queryValues.Get("raw"))
+	wrap, _ := strconv.ParseBool(queryValues.Get("wrap"))
+	progress, _ := strconv.ParseBool(queryValues.Get("progress"))
+	hidden, _ := strconv.ParseBool(queryValues.Get("hidden"))
+	silent, _ := strconv.ParseBool(queryValues.Get("silent")) // just print root hash
+	printChan, outChan, errChan := importer.ToChannel(ctx, f, progress,
+		hidden, trickle, raw, silent, wrap, chunker)
+
+	shard := queryValues.Get("shard")
+	//	quiet := queryValues.Get("quiet") // just print hashes, no meta data
+
+	if shard == "true" {
+		if err := api.consumeImport(ctx, outChan, printChan, errChan,
+			w, api.consumeShardAdd, api.finishShardAdd); err != nil {
+			panic(err)
 		}
-		if err != nil {
-			// TODO: think about how to handle this better.
-			// We may not want to stop all work after one failure
-			logger.Error(err)
-			sendAcceptedResponse(w, errors.New("error forwarding block"))
-			return
+	} else {
+		if err := api.consumeImport(ctx, outChan, printChan, errChan,
+			w, api.consumeLocalAdd, api.finishLocalAdd); err != nil {
+			panic(err)
 		}
 	}
-
-	// TODO: when complete this call should answer with a cid
-	// or better yet a pin-info describing the allocations
-	// of the resulting allocation
-	//
-	// Before returning this we will need to trigger a pin
-	// probably doing the same thing as Pin if its not a sharding call
-	sendAcceptedResponse(w, err)
 }
 
 func (api *API) peerListHandler(w http.ResponseWriter, r *http.Request) {

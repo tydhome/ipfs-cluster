@@ -155,16 +155,55 @@ requires authorization. implies --https, which you can disable with --force-http
 			Name:  "add",
 			Usage: "ipfs-cluster-ctl add <path> ... add a file to ipfs via cluster",
 			Description: `
-Only works with file paths, no directories.  Recurisive adding not yet supported.  --shard flag not
-yet supported.  Eventually users would use this endpoint if they want the file to be sharded across the cluster.
-This is useful in the case several ipfs peers want to ingest the file and combined have enough space
-to host but no single peer's repo has the capacity for the entire file.  No stdin reading yet either, that
-is also TODO
+Only works with file paths, no directories.  Recurisive adding not yet 
+supported.  --shard flag not yet supported.  Eventually users would use this 
+endpoint if they want the file to be sharded across the cluster. This is useful
+in the case several ipfs peers want to ingest the file and combined have enough
+space to host but no single peer's repo has the capacity for the entire file.
+No stdin reading yet either, that is also TODO
 `,
 			Flags: []cli.Flag{
 				cli.BoolFlag{
 					Name:  "recursive, r",
 					Usage: "add directory paths recursively, default false",
+				},
+				cli.BoolFlag{
+					Name:  "shard",
+					Usage: "break the file into pieces (shards) and distributed among peers, default false",
+				},
+				cli.BoolFlag{
+					Name:  "quiet, q",
+					Usage: "write minimal output",
+				},
+				cli.BoolFlag{
+					Name:  "silent",
+					Usage: "write no output",
+				},
+				cli.StringFlag{
+					Name: "layout, L",
+					Usage: `Dag layout to use for dag generation.  Currently 'trickle' is the only option
+supported`,
+				},
+				cli.StringFlag{
+					Name: "chunker, s",
+					Usage: `Chunking algorithm to use. Either fixed block size: 'size-<size>', or rabin 
+chunker: 'rabin-<min>-<avg>-<max>'.  Default is 'size-262144'`,
+				},
+				cli.BoolFlag{
+					Name:  "raw-leaves",
+					Usage: "Use raw blocks for leaves (experimental)",
+				},
+				cli.BoolFlag{
+					Name:  "wrap, w",
+					Usage: "wrap files with a directory object",
+				},
+				cli.BoolFlag{
+					Name:  "progress, p",
+					Usage: "Stream progress data",
+				},
+				cli.BoolFlag{
+					Name:  "hidden, H",
+					Usage: "include files that are hidden.  Only takes effect on recursive add",
 				},
 			},
 			Action: func(c *cli.Context) error {
@@ -176,10 +215,13 @@ is also TODO
 				// Files are all opened but not read until they are sent.
 				multiFileR, err := parseFileArgs(paths, c.Bool("recursive"))
 				checkErr("serializing all files", err)
-				cerr := globalClient.AddMultiFile(multiFileR)
-				if cerr != nil {
-					formatResponse(c, nil, cerr)
-				}
+				resp, cerr := globalClient.AddMultiFile(multiFileR,
+					c.Bool("shard"), c.Bool("quiet"),
+					c.Bool("silent"), c.String("layout"),
+					c.String("chunker"),
+					c.Bool("raw-leaves"), c.Bool("wrap"),
+					c.Bool("progress"), c.Bool("hidden"))
+				formatResponse(c, resp, cerr)
 				return nil
 			},
 		},

@@ -89,7 +89,7 @@ type IPFSConnector interface {
 	// by "repo stat".
 	RepoSize() (uint64, error)
 	// BlockPut directly adds a block of data to the IPFS repo
-	BlockPut([]byte) (string, error)
+	BlockPut(api.NodeWithMeta) (string, error)
 }
 
 // Peered represents a component which needs to be aware of the peers
@@ -150,6 +150,15 @@ type PinAllocator interface {
 	// contains the metrics for all peers which are eligible for pinning
 	// the content.
 	Allocate(c *cid.Cid, current, candidates map[peer.ID]api.Metric) ([]peer.ID, error)
+}
+
+// Sharder controls the aggregation of ipfs file nodes into shards.  File
+// shards are grouped together and referenced by a cluster DAG node and
+// distributed among the cluster
+type Sharder interface {
+	Component
+	AddNode(size uint64, data []byte, c string, id string) (string, error)
+	Finalize(id string) error
 }
 
 // PeerMonitor is a component in charge of monitoring the peers in the cluster

@@ -22,7 +22,7 @@ import (
 
 	// needed to parse /ws multiaddresses
 	_ "github.com/libp2p/go-ws-transport"
-	// needed to prase /dns* multiaddresses
+	// needed to parse /dns* multiaddresses
 	_ "github.com/multiformats/go-multiaddr-dns"
 )
 
@@ -525,7 +525,7 @@ type Pin struct {
 	ReplicationFactorMax int
 }
 
-// PinCid is a shorcut to create a Pin only with a Cid.
+// PinCid is a shortcut to create a Pin only with a Cid.
 func PinCid(c *cid.Cid) Pin {
 	return Pin{
 		Cid:         c,
@@ -607,6 +607,42 @@ func (pins PinSerial) ToPin() Pin {
 		ReplicationFactorMin: pins.ReplicationFactorMin,
 		ReplicationFactorMax: pins.ReplicationFactorMax,
 	}
+}
+
+// AddedOutput carries information for displaying the standard ipfs output
+// indicating a node of a file has been added.
+type AddedOutput struct {
+	Error
+	Name  string
+	Hash  string `json:",omitempty"`
+	Bytes int64  `json:",omitempty"`
+	Size  string `json:",omitempty"`
+}
+
+// NodeWithMeta specifies a block of data and a set of optional metadata fields
+// carrying information about the encoded ipld node
+type NodeWithMeta struct {
+	Data   []byte
+	Cid    string
+	Size   uint64
+	ID     string
+	Format string
+}
+
+// AllocateInfo transports the information necessary to call an allocator's
+// Allocate function.
+type AllocateInfo struct {
+	Cid        string
+	Current    map[peer.ID]Metric
+	Candidates map[peer.ID]Metric
+}
+
+// GetCid decodes the cid string within AllocateInfo.  If the cid string is ""
+// then GetCid returns nil
+func (aI *AllocateInfo) GetCid() *cid.Cid {
+	// Ignoring decoding errors
+	c, _ := cid.Decode(aI.Cid)
+	return c
 }
 
 // Metric transports information about a peer.ID. It is used to decide
