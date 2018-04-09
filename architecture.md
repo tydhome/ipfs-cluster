@@ -38,7 +38,7 @@ These definitions are still evolving and may change:
     * **Informer**: a component to collect metrics which are used by the `PinAllocator` and the `PeerMonitor`. Default: `disk`
   * The **Consensus** component. This component is separate but internal to Cluster in the sense that it cannot be provided arbitrarily during initialization. The consensus component uses `go-libp2p-raft` via `go-libp2p-consensus`. While it is attempted to be agnostic from the underlying consensus implementation, it is not possible in all places. These places are however well marked (everything that calls `Leader()`).
 
-Components perform a number of functions and need to be able to communicate with eachothers: i.e.:
+Components perform a number of functions and need to be able to communicate with each others: i.e.:
 
   * the API needs to use functionality provided by the main component
   * the PinTracker needs to use functionality provided by the IPFSConnector
@@ -46,11 +46,11 @@ Components perform a number of functions and need to be able to communicate with
 
 ### RPC API
 
-Communication between components happens through the RPC API: a set of functions which stablishes which functions are available to components (`rpc_api.go`).
+Communication between components happens through the RPC API: a set of functions which establishes which functions are available to components (`rpc_api.go`).
 
 The RPC API uses `go-libp2p-gorpc`. The main Cluster component runs an RPC server. RPC Clients are provided to all components for their use. The main feature of this setup is that **Components can use `go-libp2p-gorpc` to perform operations in the local cluster and in any remote cluster node using the same API**.
 
-This makes broadcasting operations and contacting the Cluster leader really easy. It also allows to think of a future where components may be completely arbitrary and run from different applications. Local RPC calls, on their side, do not suffer any penalty as the execution is short-cut directly to the correspondant component of the Cluster, without network intervention.
+This makes broadcasting operations and contacting the Cluster leader really easy. It also allows to think of a future where components may be completely arbitrary and run from different applications. Local RPC calls, on their side, do not suffer any penalty as the execution is short-cut directly to the correspondent component of the Cluster, without network intervention.
 
 On the down-side, the RPC API involves "reflect" magic and it is not easy to verify that a call happens to a method registered on the RPC server. Every RPC-based functionality should be tested. Bad operations will result in errors so they are easy to catch on tests.
 
@@ -80,7 +80,7 @@ This sections gives an overview of how some things work in Cluster. Doubts? Some
 
 * Initialize the P2P host.
 * Initialize Consensus: start looking for a leader asap.
-* Setup RPC in all componenets: allow them to communicate with different parts of the cluster.
+* Setup RPC in all components: allow them to communicate with different parts of the cluster.
 * Bootstrap: if we are bootstrapping from another node, do the dance (contact, receive cluster peers, join consensus)
 * Cluster is up, but it is only `Ready()` when consensus is ready (which in this case means it has found a leader).
 * All components are doing its thing.
