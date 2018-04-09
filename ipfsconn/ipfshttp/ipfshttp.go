@@ -294,13 +294,15 @@ func (ipfs *Connector) pinOpHandler(op string, w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	err = ipfs.rpcClient.Call("",
+	err = ipfs.rpcClient.Call(
+		"",
 		"Cluster",
 		op,
 		api.PinSerial{
 			Cid: arg,
 		},
-		&struct{}{})
+		&struct{}{},
+	)
 
 	if err != nil {
 		ipfsErrorResponder(w, err.Error())
@@ -338,11 +340,13 @@ func (ipfs *Connector) pinLsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var pin api.PinSerial
-		err = ipfs.rpcClient.Call("",
+		err = ipfs.rpcClient.Call(
+			"",
 			"Cluster",
 			"PinGet",
 			api.PinCid(c).ToSerial(),
-			&pin)
+			&pin,
+		)
 		if err != nil {
 			ipfsErrorResponder(w, fmt.Sprintf(
 				"Error: path '%s' is not pinned",
@@ -354,11 +358,13 @@ func (ipfs *Connector) pinLsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		var pins []api.PinSerial
-		err := ipfs.rpcClient.Call("",
+		err := ipfs.rpcClient.Call(
+			"",
 			"Cluster",
 			"Pins",
 			struct{}{},
-			&pins)
+			&pins,
+		)
 
 		if err != nil {
 			ipfsErrorResponder(w, err.Error())
@@ -455,13 +461,15 @@ func (ipfs *Connector) addHandler(w http.ResponseWriter, r *http.Request) {
 
 	logger.Debugf("proxy /add request and will pin %s", pinHashes)
 	for _, pin := range pinHashes {
-		err := ipfs.rpcClient.Call("",
+		err := ipfs.rpcClient.Call(
+			"",
 			"Cluster",
 			"Pin",
 			api.PinSerial{
 				Cid: pin,
 			},
-			&struct{}{})
+			&struct{}{},
+		)
 		if err != nil {
 			// we need to fail the operation and make sure the
 			// user knows about it.
@@ -794,11 +802,13 @@ func (ipfs *Connector) apiURL() string {
 // triggers ipfs swarm connect requests
 func (ipfs *Connector) ConnectSwarms() error {
 	var idsSerial []api.IDSerial
-	err := ipfs.rpcClient.Call("",
+	err := ipfs.rpcClient.Call(
+		"",
 		"Cluster",
 		"Peers",
 		struct{}{},
-		&idsSerial)
+		&idsSerial,
+	)
 	if err != nil {
 		logger.Error(err)
 		return err
