@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io/ioutil"
+	"path/filepath"
 	"time"
 
+	"github.com/ipfs/ipfs-cluster/api"
 	"github.com/ipfs/ipfs-cluster/config"
 
 	hraft "github.com/hashicorp/raft"
+	peer "github.com/libp2p/go-libp2p-peer"
 )
 
 // ConfigKey is the default configuration key for holding this component's
@@ -48,6 +51,11 @@ type Config struct {
 	CommitRetries int
 	// How long to wait between retries
 	CommitRetryDelay time.Duration
+	// InitPeerset provides the list of initial cluster peers for new
+	// peers (with no prior state). It is when Raft was already initialized
+	// or when when starting in staging mode, before adding the peer
+	// to a running cluster.
+	InitPeerset []peer.ID
 }
 
 // ConfigJSON represents a human-friendly Config
@@ -106,9 +114,11 @@ type jsonConfig struct {
 	// step down as leader.
 	LeaderLeaseTimeout string `json:"leader_lease_timeout,omitempty"`
 
-	// StartAsLeader forces Raft to start in the leader state. This should
-	// never be used except for testing purposes, as it can cause a split-brain.
-	StartAsLeader bool `json:"start_as_leader,omitempty"`
+	// InitPeerset provides the list of initial cluster peers for new
+	// peers (with no prior state). It is when Raft was already initialized
+	// or when when starting in staging mode, before adding the peer
+	// to a running cluster.
+	InitPeerset []string `json:"init_peerset"`
 
 	// The unique ID for this server across all time. When running with
 	// ProtocolVersion < 3, you must set this to be the same as the network
@@ -197,6 +207,7 @@ func (cfg *Config) LoadJSON(raw []byte) error {
 	config.SetIfNotDefault(jcfg.SnapshotThreshold, &cfg.RaftConfig.SnapshotThreshold)
 	config.SetIfNotDefault(leaderLeaseTimeout, &cfg.RaftConfig.LeaderLeaseTimeout)
 
+	cfg.InitPeerset = api.StringsToPeers(jcfg.InitPeerset)
 	return cfg.Validate()
 }
 
@@ -216,6 +227,7 @@ func (cfg *Config) ToJSON() ([]byte, error) {
 	jcfg.SnapshotInterval = cfg.RaftConfig.SnapshotInterval.String()
 	jcfg.SnapshotThreshold = cfg.RaftConfig.SnapshotThreshold
 	jcfg.LeaderLeaseTimeout = cfg.RaftConfig.LeaderLeaseTimeout.String()
+	jcfg.InitPeerset = api.PeersToStrings(cfg.InitPeerset)
 
 	return config.DefaultJSONMarshal(jcfg)
 }
@@ -227,6 +239,7 @@ func (cfg *Config) Default() error {
 	cfg.NetworkTimeout = DefaultNetworkTimeout
 	cfg.CommitRetries = DefaultCommitRetries
 	cfg.CommitRetryDelay = DefaultCommitRetryDelay
+	cfg.InitPeerset = []peer.ID{}
 	cfg.RaftConfig = hraft.DefaultConfig()
 
 	// These options are imposed over any Default Raft Config.
@@ -237,4 +250,12 @@ func (cfg *Config) Default() error {
 	cfg.RaftConfig.LogOutput = ioutil.Discard
 	cfg.RaftConfig.Logger = raftStdLogger // see logging.go
 	return nil
+}
+
+// GetDataFolder returns the Raft data folder that we are using.
+func (cfg *Config) GetDataFolder() string {
+	if cfg.DataFolder == "" {
+		return filepath.Join(cfg.BaseDir, DefaultDataSubFolder)
+	}
+	return cfg.DataFolder
 }

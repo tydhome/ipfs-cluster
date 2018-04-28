@@ -44,19 +44,32 @@ func (dbh *dataBackupHelper) listBackups() []string {
 }
 
 func (dbh *dataBackupHelper) makeBackup() error {
+	folder := filepath.Join(dbh.baseDir, dbh.folderName)
+	if _, err := os.Stat(folder); os.IsNotExist(err) {
+		// nothing to backup
+		logger.Debug("nothing to backup")
+		return nil
+	}
+
+	// make sure config folder exists
 	err := os.MkdirAll(dbh.baseDir, 0700)
 	if err != nil {
 		return err
 	}
+
+	// list all backups in it
 	backups := dbh.listBackups()
-	// remove last / oldest
+	// remove last / oldest. Ex. if max is five, remove name.old.4
 	if len(backups) >= RaftDataBackupKeep {
 		os.RemoveAll(backups[len(backups)-1])
-	} else {
+	} else { // append new backup folder. Ex, if 2 exist: add name.old.2
 		backups = append(backups, dbh.makeName(len(backups)))
 	}
 
-	// increase number for all backups folders
+	// increase number for all backups folders.
+	// If there are 3: 1->2, 0->1.
+	// Note in all cases the last backup in the list does not exist
+	// (either removed or not created, just added to this list)
 	for i := len(backups) - 1; i > 0; i-- {
 		err := os.Rename(backups[i-1], backups[i])
 		if err != nil {
